@@ -1,5 +1,9 @@
 # 🚀 Claude Code VPS Bootstrap
 
+```
+curl -fsSL https://raw.githubusercontent.com/m0rg0t/quick-start-claude-code-on-vps/refs/heads/main/start.sh -o bootstrap.sh && chmod +x bootstrap.sh && ./bootstrap.sh
+```
+
 One-shot bash script to prepare a **clean VPS** for remote development with **Claude Code**.
 
 This setup is designed so that:
