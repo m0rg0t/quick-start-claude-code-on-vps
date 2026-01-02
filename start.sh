@@ -3,10 +3,11 @@ set -euo pipefail
 
 # ====== settings (override via env) ======
 TMUX_SESSION="${TMUX_SESSION:-main}"
-ENABLE_REBOOT_TMUX="${ENABLE_REBOOT_TMUX:-1}"      # 1 = enable @reboot tmux session, 0 = disable
-INSTALL_CLAUDE="${INSTALL_CLAUDE:-1}"              # 1 = install Claude Code CLI
+ENABLE_REBOOT_TMUX="${ENABLE_REBOOT_TMUX:-1}"        # 1 = enable @reboot tmux session, 0 = disable
+INSTALL_CLAUDE="${INSTALL_CLAUDE:-1}"                # 1 = install Claude Code CLI
 MIN_RAM_MB_FOR_NO_SWAP="${MIN_RAM_MB_FOR_NO_SWAP:-2048}"  # below this RAM, create swap if none
-SWAP_SIZE_GB="${SWAP_SIZE_GB:-3}"                  # swap size to create when needed
+SWAP_SIZE_GB="${SWAP_SIZE_GB:-3}"                    # swap size to create when needed
+USE_ZSH="${USE_ZSH:-1}"                              # 1 = install & set zsh as default shell
 # =========================================
 
 log() { echo -e "==> $*"; }
@@ -26,13 +27,29 @@ sudo apt install -y git tmux curl openssh-server ca-certificates
 log "Enabling SSH service..."
 sudo systemctl enable --now ssh 2>/dev/null || sudo systemctl enable --now sshd 2>/dev/null || true
 
+# --- optionally install and set zsh as default shell ---
+if [[ "$USE_ZSH" == "1" ]]; then
+  log "Installing zsh..."
+  sudo apt install -y zsh
+
+  # Set zsh as default shell for current user (best effort)
+  if command -v zsh >/dev/null 2>&1; then
+    ZSH_PATH="$(command -v zsh)"
+    log "Setting default shell to zsh for user: $USER"
+    if [[ "$USER" == "root" ]]; then
+      sudo chsh -s "$ZSH_PATH" root || true
+    else
+      sudo chsh -s "$ZSH_PATH" "$USER" || true
+    fi
+  fi
+fi
+
 # --- memory/swap guard (prevents OOM during Claude install on small VPS) ---
 mem_kb="$(awk '/MemTotal/ {print $2}' /proc/meminfo)"
 mem_mb="$((mem_kb / 1024))"
 
 has_swap="0"
 if swapon --show 2>/dev/null | awk 'NR>1{exit 1} END{exit 0}'; then
-  # no swap entries beyond header -> no swap
   has_swap="0"
 else
   has_swap="1"
@@ -45,9 +62,7 @@ if [[ "$has_swap" == "0" && "$mem_mb" -lt "$MIN_RAM_MB_FOR_NO_SWAP" ]]; then
   sudo chmod 600 /swapfile
   sudo mkswap /swapfile
   sudo swapon /swapfile
-  # persist across reboot
   grep -qE '^/swapfile\s' /etc/fstab || echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab >/dev/null
-  # make swapping less aggressive (reasonable default)
   echo 'vm.swappiness=20' | sudo tee /etc/sysctl.d/99-swappiness.conf >/dev/null
   sudo sysctl -p /etc/sysctl.d/99-swappiness.conf >/dev/null || true
   log "Swap created and enabled."
@@ -99,17 +114,24 @@ Host github.com
 EOF
 fi
 
-# ---- tmux auto-attach on SSH login ----
-BASHRC=~/.bashrc
-if ! grep -q "tmux new-session -A -s ${TMUX_SESSION}" "$BASHRC"; then
-cat >> "$BASHRC" <<EOF
+# ---- tmux auto-attach on SSH login (bash + zsh) ----
+add_tmux_autoattach() {
+  local rcfile="$1"
+  [[ -f "$rcfile" ]] || touch "$rcfile"
+
+  if ! grep -q "tmux new-session -A -s ${TMUX_SESSION}" "$rcfile"; then
+cat >> "$rcfile" <<EOF
 
 # Auto-attach tmux on interactive SSH login
 if [ -n "\$PS1" ] && [ -z "\$TMUX" ] && [ -n "\$SSH_CONNECTION" ]; then
   tmux new-session -A -s ${TMUX_SESSION}
 fi
 EOF
-fi
+  fi
+}
+
+add_tmux_autoattach "$HOME/.bashrc"
+add_tmux_autoattach "$HOME/.zshrc"
 
 # ---- optional: tmux session at reboot ----
 if [[ "$ENABLE_REBOOT_TMUX" == "1" ]]; then
@@ -140,3 +162,4 @@ echo "------------------------------------------------------------"
 echo "2) Reconnect via SSH to auto-enter tmux, or run: tmux new -A -s ${TMUX_SESSION}"
 echo "3) Verify Claude Code: claude --version (then auth/login if needed)"
 echo "4) Test GitHub SSH (after adding key): ssh -T git@github.com"
+echo "5) If you enabled zsh, re-login to apply default shell (or run: exec zsh)"
