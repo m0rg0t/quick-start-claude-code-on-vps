@@ -2,16 +2,69 @@
 set -euo pipefail
 
 # ====== settings (override via env) ======
+# Profile: minimal | standard | full
+PROFILE="${PROFILE:-standard}"
+
+# Individual overrides (1=install, 0=skip, auto=depends on profile)
+INSTALL_CLAUDE="${INSTALL_CLAUDE:-auto}"
+INSTALL_CODEX="${INSTALL_CODEX:-auto}"
+INSTALL_NODEJS="${INSTALL_NODEJS:-auto}"
+INSTALL_DEV_TOOLS="${INSTALL_DEV_TOOLS:-auto}"
+INSTALL_EXTENDED_TOOLS="${INSTALL_EXTENDED_TOOLS:-auto}"
+INSTALL_CODE_SERVER="${INSTALL_CODE_SERVER:-auto}"
+
+# Other settings
 TMUX_SESSION="${TMUX_SESSION:-main}"
-ENABLE_REBOOT_TMUX="${ENABLE_REBOOT_TMUX:-1}"        # 1 = enable @reboot tmux session, 0 = disable
-INSTALL_CLAUDE="${INSTALL_CLAUDE:-1}"                # 1 = install Claude Code CLI
-MIN_RAM_MB_FOR_NO_SWAP="${MIN_RAM_MB_FOR_NO_SWAP:-2048}"  # below this RAM, create swap if none
-SWAP_SIZE_GB="${SWAP_SIZE_GB:-3}"                    # swap size to create when needed
-USE_ZSH="${USE_ZSH:-1}"                              # 1 = install & set zsh as default shell
+ENABLE_REBOOT_TMUX="${ENABLE_REBOOT_TMUX:-1}"
+USE_ZSH="${USE_ZSH:-auto}"
+MIN_RAM_MB_FOR_NO_SWAP="${MIN_RAM_MB_FOR_NO_SWAP:-2048}"
+SWAP_SIZE_GB="${SWAP_SIZE_GB:-3}"
 # =========================================
+
+# ====== profile resolution ======
+resolve_profile() {
+  case "$PROFILE" in
+    minimal)
+      [[ "$USE_ZSH" == "auto" ]] && USE_ZSH=0
+      [[ "$INSTALL_CLAUDE" == "auto" ]] && INSTALL_CLAUDE=1
+      [[ "$INSTALL_CODEX" == "auto" ]] && INSTALL_CODEX=0
+      [[ "$INSTALL_NODEJS" == "auto" ]] && INSTALL_NODEJS=0
+      [[ "$INSTALL_DEV_TOOLS" == "auto" ]] && INSTALL_DEV_TOOLS=0
+      [[ "$INSTALL_EXTENDED_TOOLS" == "auto" ]] && INSTALL_EXTENDED_TOOLS=0
+      [[ "$INSTALL_CODE_SERVER" == "auto" ]] && INSTALL_CODE_SERVER=0
+      ;;
+    standard)
+      [[ "$USE_ZSH" == "auto" ]] && USE_ZSH=1
+      [[ "$INSTALL_CLAUDE" == "auto" ]] && INSTALL_CLAUDE=1
+      [[ "$INSTALL_CODEX" == "auto" ]] && INSTALL_CODEX=1
+      [[ "$INSTALL_NODEJS" == "auto" ]] && INSTALL_NODEJS=1
+      [[ "$INSTALL_DEV_TOOLS" == "auto" ]] && INSTALL_DEV_TOOLS=1
+      [[ "$INSTALL_EXTENDED_TOOLS" == "auto" ]] && INSTALL_EXTENDED_TOOLS=0
+      [[ "$INSTALL_CODE_SERVER" == "auto" ]] && INSTALL_CODE_SERVER=0
+      ;;
+    full)
+      [[ "$USE_ZSH" == "auto" ]] && USE_ZSH=1
+      [[ "$INSTALL_CLAUDE" == "auto" ]] && INSTALL_CLAUDE=1
+      [[ "$INSTALL_CODEX" == "auto" ]] && INSTALL_CODEX=1
+      [[ "$INSTALL_NODEJS" == "auto" ]] && INSTALL_NODEJS=1
+      [[ "$INSTALL_DEV_TOOLS" == "auto" ]] && INSTALL_DEV_TOOLS=1
+      [[ "$INSTALL_EXTENDED_TOOLS" == "auto" ]] && INSTALL_EXTENDED_TOOLS=1
+      [[ "$INSTALL_CODE_SERVER" == "auto" ]] && INSTALL_CODE_SERVER=1
+      ;;
+    *)
+      warn "Unknown profile: $PROFILE. Using 'standard'."
+      PROFILE="standard"
+      resolve_profile
+      ;;
+  esac
+}
 
 log() { echo -e "==> $*"; }
 warn() { echo -e "!!  $*" >&2; }
+
+resolve_profile
+log "Using profile: $PROFILE"
+# ================================
 
 # --- ensure apt exists (Debian/Ubuntu) ---
 if ! command -v apt >/dev/null 2>&1; then
@@ -26,6 +79,24 @@ sudo apt install -y git tmux curl openssh-server ca-certificates
 
 log "Enabling SSH service..."
 sudo systemctl enable --now ssh 2>/dev/null || sudo systemctl enable --now sshd 2>/dev/null || true
+
+# --- dev tools ---
+if [[ "$INSTALL_DEV_TOOLS" == "1" ]]; then
+  log "Installing dev tools (jq, htop, tree)..."
+  sudo apt install -y jq htop tree
+fi
+
+if [[ "$INSTALL_EXTENDED_TOOLS" == "1" ]]; then
+  log "Installing extended tools (ripgrep, fzf, bat, fd-find)..."
+  sudo apt install -y ripgrep fzf fd-find
+  # bat may be named 'batcat' on Ubuntu/Debian
+  sudo apt install -y bat 2>/dev/null || sudo apt install -y batcat 2>/dev/null || true
+  # Create 'bat' alias if batcat was installed
+  if command -v batcat >/dev/null 2>&1 && ! command -v bat >/dev/null 2>&1; then
+    mkdir -p ~/.local/bin
+    ln -sf "$(command -v batcat)" ~/.local/bin/bat
+  fi
+fi
 
 # --- optionally install and set zsh as default shell ---
 if [[ "$USE_ZSH" == "1" ]]; then
@@ -141,6 +212,17 @@ if [[ "$ENABLE_REBOOT_TMUX" == "1" ]]; then
   ) | crontab -
 fi
 
+# ---- install Node.js (required for Codex) ----
+if [[ "$INSTALL_NODEJS" == "1" ]]; then
+  if command -v node >/dev/null 2>&1; then
+    log "Node.js already installed: $(node --version)"
+  else
+    log "Installing Node.js LTS via NodeSource..."
+    curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
+    sudo apt install -y nodejs
+  fi
+fi
+
 # ---- install Claude Code ----
 if [[ "$INSTALL_CLAUDE" == "1" ]]; then
   if command -v claude >/dev/null 2>&1; then
@@ -151,15 +233,84 @@ if [[ "$INSTALL_CLAUDE" == "1" ]]; then
   fi
 fi
 
+# ---- install OpenAI Codex CLI ----
+if [[ "$INSTALL_CODEX" == "1" ]]; then
+  if command -v codex >/dev/null 2>&1; then
+    log "OpenAI Codex already installed: $(codex --version 2>/dev/null || echo 'installed')"
+  else
+    if ! command -v npm >/dev/null 2>&1; then
+      warn "npm not found. Skipping Codex installation. Install Node.js first."
+    else
+      log "Installing OpenAI Codex CLI via npm..."
+      sudo npm install -g @openai/codex
+    fi
+  fi
+fi
+
+# ---- install code-server (VS Code in browser) ----
+if [[ "$INSTALL_CODE_SERVER" == "1" ]]; then
+  if command -v code-server >/dev/null 2>&1; then
+    log "code-server already installed: $(code-server --version | head -1)"
+  else
+    log "Installing code-server..."
+    curl -fsSL https://code-server.dev/install.sh | sh
+    # Enable code-server service (but don't start it)
+    sudo systemctl enable code-server@$USER 2>/dev/null || true
+  fi
+fi
+
 echo
-log "DONE."
+log "DONE. Profile: $PROFILE"
 echo
-echo "Next steps:"
+echo "============================================================"
+echo "                      NEXT STEPS"
+echo "============================================================"
+echo
 echo "1) Add this SSH public key to GitHub/GitLab:"
 echo "------------------------------------------------------------"
 cat ~/.ssh/id_ed25519.pub
 echo "------------------------------------------------------------"
-echo "2) Reconnect via SSH to auto-enter tmux, or run: tmux new -A -s ${TMUX_SESSION}"
-echo "3) Verify Claude Code: claude --version (then auth/login if needed)"
-echo "4) Test GitHub SSH (after adding key): ssh -T git@github.com"
-echo "5) If you enabled zsh, re-login to apply default shell (or run: exec zsh)"
+echo
+echo "2) Reconnect via SSH to auto-enter tmux, or run:"
+echo "   tmux new -A -s ${TMUX_SESSION}"
+echo
+echo "3) Test GitHub SSH (after adding key):"
+echo "   ssh -T git@github.com"
+
+if [[ "$INSTALL_CLAUDE" == "1" ]]; then
+  echo
+  echo "4) Authenticate Claude Code:"
+  echo "   claude --version && claude"
+fi
+
+if [[ "$INSTALL_CODEX" == "1" ]]; then
+  echo
+  echo "5) Configure OpenAI Codex:"
+  echo "   export OPENAI_API_KEY=your-api-key"
+  echo "   codex --help"
+fi
+
+if [[ "$INSTALL_CODE_SERVER" == "1" ]]; then
+  echo
+  echo "6) Start code-server (VS Code in browser):"
+  echo "   sudo systemctl start code-server@$USER"
+  echo "   # Access via: http://your-vps-ip:8080"
+  echo "   # Password in: ~/.config/code-server/config.yaml"
+fi
+
+if [[ "$USE_ZSH" == "1" ]]; then
+  echo
+  echo "7) Re-login to apply zsh as default shell (or run: exec zsh)"
+fi
+
+echo
+echo "============================================================"
+echo "Installed tools summary:"
+echo "  Profile: $PROFILE"
+[[ "$INSTALL_CLAUDE" == "1" ]] && echo "  - Claude Code CLI"
+[[ "$INSTALL_CODEX" == "1" ]] && echo "  - OpenAI Codex CLI"
+[[ "$INSTALL_CODE_SERVER" == "1" ]] && echo "  - code-server (VS Code)"
+[[ "$INSTALL_DEV_TOOLS" == "1" ]] && echo "  - Dev tools (jq, htop, tree)"
+[[ "$INSTALL_EXTENDED_TOOLS" == "1" ]] && echo "  - Extended tools (rg, fzf, bat, fd)"
+[[ "$USE_ZSH" == "1" ]] && echo "  - zsh shell"
+echo "============================================================"
