@@ -204,6 +204,21 @@ EOF
 add_tmux_autoattach "$HOME/.bashrc"
 add_tmux_autoattach "$HOME/.zshrc"
 
+# ---- ensure ~/.local/bin is in PATH (for Claude Code, Codex, etc.) ----
+ensure_local_bin_in_path() {
+  local rcfile="$1"
+  [[ -f "$rcfile" ]] || touch "$rcfile"
+
+  if ! grep -q 'export PATH="\$HOME/.local/bin:\$PATH"' "$rcfile" && \
+     ! grep -q "export PATH='\$HOME/.local/bin:\$PATH'" "$rcfile"; then
+cat >> "$rcfile" <<'EOF'
+
+# Add ~/.local/bin to PATH (for Claude Code, etc.)
+export PATH="$HOME/.local/bin:$PATH"
+EOF
+  fi
+}
+
 # ---- generate setup guide ----
 generate_setup_guide() {
   local guide="$HOME/SETUP_GUIDE.md"
@@ -389,6 +404,12 @@ if [[ "$INSTALL_CLAUDE" == "1" ]]; then
     log "Installing Claude Code via official installer..."
     curl -fsSL https://claude.ai/install.sh | bash
   fi
+
+  # Ensure ~/.local/bin is in PATH for all shells
+  ensure_local_bin_in_path "$HOME/.bashrc"
+  ensure_local_bin_in_path "$HOME/.zshrc"
+  export PATH="$HOME/.local/bin:$PATH"
+  log "Added ~/.local/bin to PATH in shell profiles"
 fi
 
 # ---- install OpenAI Codex CLI ----
