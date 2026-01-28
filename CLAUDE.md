@@ -74,6 +74,7 @@ PROFILE=minimal INSTALL_CODEX=1 INSTALL_NODEJS=1 ./start.sh
 12. Claude Code CLI installation
 13. OpenAI Codex CLI installation (if enabled)
 14. code-server installation (if enabled)
+15. Generate setup guide (`~/SETUP_GUIDE.md`)
 
 ## Testing
 

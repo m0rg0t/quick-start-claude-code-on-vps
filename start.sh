@@ -204,6 +204,164 @@ EOF
 add_tmux_autoattach "$HOME/.bashrc"
 add_tmux_autoattach "$HOME/.zshrc"
 
+# ---- generate setup guide ----
+generate_setup_guide() {
+  local guide="$HOME/SETUP_GUIDE.md"
+  local gen_date
+  gen_date="$(date '+%Y-%m-%d %H:%M:%S')"
+
+  # Header + SSH key section (always present, needs variable expansion)
+  cat > "$guide" <<EOF
+# VPS Setup Guide
+
+**Profile:** $PROFILE
+**Generated:** $gen_date
+
+---
+
+## 1. Add your SSH public key to GitHub / GitLab
+
+Copy the key below and add it to your Git hosting provider:
+
+- **GitHub:** <https://github.com/settings/ssh/new>
+- **GitLab:** <https://gitlab.com/-/user_settings/ssh_keys>
+
+\`\`\`
+$(cat ~/.ssh/id_ed25519.pub 2>/dev/null || echo "Key not found — run: ssh-keygen -t ed25519")
+\`\`\`
+
+After adding the key, verify with:
+
+\`\`\`bash
+ssh -T git@github.com
+\`\`\`
+
+---
+
+## 2. tmux
+
+Your SSH sessions auto-attach to a tmux session named **$TMUX_SESSION**.
+To reconnect manually:
+
+\`\`\`bash
+tmux new-session -A -s $TMUX_SESSION
+\`\`\`
+
+EOF
+
+  # Claude Code section
+  if [[ "$INSTALL_CLAUDE" == "1" ]]; then
+    cat >> "$guide" <<'EOF'
+---
+
+## 3. Claude Code
+
+Authenticate Claude Code (the CLI opens a browser for OAuth login):
+
+```bash
+claude
+```
+
+**Authentication options:**
+
+- **Claude Pro / Max subscription** (recommended) — log in with your Claude.ai account: <https://claude.ai/login>
+- **Anthropic Console** (API billing) — complete OAuth via the Console: <https://console.anthropic.com>
+
+**Useful links:**
+
+- **Pricing / plans:** <https://claude.ai/pricing>
+- **Billing & usage:** <https://claude.ai/settings/billing>
+- **Documentation:** <https://code.claude.com/docs/en/setup>
+
+EOF
+  fi
+
+  # Codex section
+  if [[ "$INSTALL_CODEX" == "1" ]]; then
+    cat >> "$guide" <<'EOF'
+---
+
+## 4. OpenAI Codex
+
+Set your API key and verify the installation:
+
+```bash
+export OPENAI_API_KEY=your-api-key
+codex --help
+```
+
+To persist the key, add the `export` line to `~/.bashrc` or `~/.zshrc`.
+
+- **Get an API key:** <https://platform.openai.com/api-keys>
+
+EOF
+  fi
+
+  # code-server section
+  if [[ "$INSTALL_CODE_SERVER" == "1" ]]; then
+    cat >> "$guide" <<'EOF'
+---
+
+## 5. code-server (VS Code in browser)
+
+Start the service:
+
+```bash
+sudo systemctl start code-server@$USER
+```
+
+Access at `http://your-vps-ip:8080`.
+The password is stored in `~/.config/code-server/config.yaml`.
+
+**Recommended:** use an SSH tunnel for secure access:
+
+```bash
+ssh -L 8080:localhost:8080 user@your-vps-ip
+```
+
+Then open <http://localhost:8080> in your local browser.
+
+EOF
+  fi
+
+  # zsh section
+  if [[ "$USE_ZSH" == "1" ]]; then
+    cat >> "$guide" <<'EOF'
+---
+
+## 6. zsh
+
+zsh has been set as your default shell. To activate it immediately
+without re-logging:
+
+```bash
+exec zsh
+```
+
+EOF
+  fi
+
+  # Summary table (needs variable expansion)
+  cat >> "$guide" <<EOF
+---
+
+## Installed components
+
+| Component | Installed |
+|-----------|-----------|
+| Git, SSH, tmux | Yes |
+| Dev tools (jq, htop, tree) | $([ "$INSTALL_DEV_TOOLS" == "1" ] && echo "Yes" || echo "No") |
+| Extended tools (rg, fzf, bat, fd) | $([ "$INSTALL_EXTENDED_TOOLS" == "1" ] && echo "Yes" || echo "No") |
+| Node.js | $([ "$INSTALL_NODEJS" == "1" ] && echo "Yes" || echo "No") |
+| Claude Code | $([ "$INSTALL_CLAUDE" == "1" ] && echo "Yes" || echo "No") |
+| OpenAI Codex | $([ "$INSTALL_CODEX" == "1" ] && echo "Yes" || echo "No") |
+| code-server | $([ "$INSTALL_CODE_SERVER" == "1" ] && echo "Yes" || echo "No") |
+| zsh | $([ "$USE_ZSH" == "1" ] && echo "Yes" || echo "No") |
+EOF
+
+  log "Setup guide saved to: $guide"
+}
+
 # ---- optional: tmux session at reboot ----
 if [[ "$ENABLE_REBOOT_TMUX" == "1" ]]; then
   log "Setting up crontab @reboot for tmux session..."
@@ -259,8 +417,12 @@ if [[ "$INSTALL_CODE_SERVER" == "1" ]]; then
   fi
 fi
 
+# ---- generate setup guide ----
+generate_setup_guide
+
 echo
 log "DONE. Profile: $PROFILE"
+log "Setup guide saved to: ~/SETUP_GUIDE.md"
 echo
 echo "============================================================"
 echo "                      NEXT STEPS"
