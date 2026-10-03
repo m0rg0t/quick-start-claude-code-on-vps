@@ -1,0 +1,16 @@
+name: Bootstrap safety tests
+on: [pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Shell syntax only
+        run: bash -n start.sh
+      - name: Pure configuration and nonmutating dry run
+        run: python3 -m unittest discover -s tests -v

@@ -1,70 +1,75 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ====== settings (override via env) ======
-# Profile: minimal | standard | full
-PROFILE="${PROFILE:-standard}"
+# Pure configuration and planning functions. Sourcing this file never bootstraps.
+log() { printf '==> %s\n' "$*"; }
+warn() { printf '!!  %s\n' "$*" >&2; }
 
-# Individual overrides (1=install, 0=skip, auto=depends on profile)
-INSTALL_CLAUDE="${INSTALL_CLAUDE:-auto}"
-INSTALL_CODEX="${INSTALL_CODEX:-auto}"
-INSTALL_NODEJS="${INSTALL_NODEJS:-auto}"
-INSTALL_DEV_TOOLS="${INSTALL_DEV_TOOLS:-auto}"
-INSTALL_EXTENDED_TOOLS="${INSTALL_EXTENDED_TOOLS:-auto}"
-INSTALL_CODE_SERVER="${INSTALL_CODE_SERVER:-auto}"
-
-# Other settings
-TMUX_SESSION="${TMUX_SESSION:-main}"
-ENABLE_REBOOT_TMUX="${ENABLE_REBOOT_TMUX:-1}"
-USE_ZSH="${USE_ZSH:-auto}"
-MIN_RAM_MB_FOR_NO_SWAP="${MIN_RAM_MB_FOR_NO_SWAP:-2048}"
-SWAP_SIZE_GB="${SWAP_SIZE_GB:-3}"
-# =========================================
-
-# ====== profile resolution ======
 resolve_profile() {
+  PROFILE="${PROFILE:-standard}"
   case "$PROFILE" in
-    minimal)
-      [[ "$USE_ZSH" == "auto" ]] && USE_ZSH=0
-      [[ "$INSTALL_CLAUDE" == "auto" ]] && INSTALL_CLAUDE=1
-      [[ "$INSTALL_CODEX" == "auto" ]] && INSTALL_CODEX=0
-      [[ "$INSTALL_NODEJS" == "auto" ]] && INSTALL_NODEJS=0
-      [[ "$INSTALL_DEV_TOOLS" == "auto" ]] && INSTALL_DEV_TOOLS=0
-      [[ "$INSTALL_EXTENDED_TOOLS" == "auto" ]] && INSTALL_EXTENDED_TOOLS=0
-      [[ "$INSTALL_CODE_SERVER" == "auto" ]] && INSTALL_CODE_SERVER=0
-      ;;
-    standard)
-      [[ "$USE_ZSH" == "auto" ]] && USE_ZSH=1
-      [[ "$INSTALL_CLAUDE" == "auto" ]] && INSTALL_CLAUDE=1
-      [[ "$INSTALL_CODEX" == "auto" ]] && INSTALL_CODEX=1
-      [[ "$INSTALL_NODEJS" == "auto" ]] && INSTALL_NODEJS=1
-      [[ "$INSTALL_DEV_TOOLS" == "auto" ]] && INSTALL_DEV_TOOLS=1
-      [[ "$INSTALL_EXTENDED_TOOLS" == "auto" ]] && INSTALL_EXTENDED_TOOLS=0
-      [[ "$INSTALL_CODE_SERVER" == "auto" ]] && INSTALL_CODE_SERVER=0
-      ;;
-    full)
-      [[ "$USE_ZSH" == "auto" ]] && USE_ZSH=1
-      [[ "$INSTALL_CLAUDE" == "auto" ]] && INSTALL_CLAUDE=1
-      [[ "$INSTALL_CODEX" == "auto" ]] && INSTALL_CODEX=1
-      [[ "$INSTALL_NODEJS" == "auto" ]] && INSTALL_NODEJS=1
-      [[ "$INSTALL_DEV_TOOLS" == "auto" ]] && INSTALL_DEV_TOOLS=1
-      [[ "$INSTALL_EXTENDED_TOOLS" == "auto" ]] && INSTALL_EXTENDED_TOOLS=1
-      [[ "$INSTALL_CODE_SERVER" == "auto" ]] && INSTALL_CODE_SERVER=1
-      ;;
-    *)
-      warn "Unknown profile: $PROFILE. Using 'standard'."
-      PROFILE="standard"
-      resolve_profile
-      ;;
+    minimal|standard|full) ;;
+    *) warn "Unknown profile: $PROFILE. Using 'standard'."; PROFILE=standard ;;
   esac
+  local flag default
+  for flag in INSTALL_CLAUDE INSTALL_CODEX INSTALL_NODEJS INSTALL_DEV_TOOLS INSTALL_EXTENDED_TOOLS INSTALL_CODE_SERVER USE_ZSH; do
+    default=0
+    case "$flag:$PROFILE" in
+      INSTALL_CLAUDE:*|INSTALL_CODEX:standard|INSTALL_CODEX:full|INSTALL_NODEJS:standard|INSTALL_NODEJS:full|INSTALL_DEV_TOOLS:standard|INSTALL_DEV_TOOLS:full|USE_ZSH:standard|USE_ZSH:full|INSTALL_EXTENDED_TOOLS:full|INSTALL_CODE_SERVER:full) default=1 ;;
+    esac
+    case "${!flag-auto}" in
+      auto) printf -v "$flag" '%s' "$default" ;;
+      0|1) ;;
+      *) warn "$flag must be auto, 0, or 1"; return 2 ;;
+    esac
+  done
+  TMUX_SESSION="${TMUX_SESSION-main}"
+  ENABLE_REBOOT_TMUX="${ENABLE_REBOOT_TMUX-1}"
+  MIN_RAM_MB_FOR_NO_SWAP="${MIN_RAM_MB_FOR_NO_SWAP-2048}"
+  SWAP_SIZE_GB="${SWAP_SIZE_GB-3}"
+  [[ "$TMUX_SESSION" =~ ^[a-zA-Z0-9_-]+$ ]] || { warn 'Invalid TMUX_SESSION (use letters, digits, underscore or dash)'; return 2; }
+  [[ "$ENABLE_REBOOT_TMUX" =~ ^[01]$ ]] || { warn 'ENABLE_REBOOT_TMUX must be 0 or 1'; return 2; }
+  # Bound decimal values before arithmetic; reject zero, signs and leading zeros.
+  [[ "$MIN_RAM_MB_FOR_NO_SWAP" =~ ^[1-9][0-9]{0,6}$ ]] || { warn 'Invalid RAM threshold'; return 2; }
+  [[ "$SWAP_SIZE_GB" =~ ^[1-9][0-9]{0,2}$ ]] || { warn 'Invalid swap size'; return 2; }
+  return 0
 }
 
-log() { echo -e "==> $*"; }
-warn() { echo -e "!!  $*" >&2; }
+print_plan() {
+  printf 'DRY RUN: profile=%s; no commands executed, files read or written, or network requests made.\n' "$PROFILE"
+  printf '%s\n' 'Would update apt and install git tmux curl openssh-server ca-certificates' 'Would enable SSH service'
+  [[ "$INSTALL_DEV_TOOLS" == 0 ]] || printf '%s\n' 'Would install jq htop tree'
+  [[ "$INSTALL_EXTENDED_TOOLS" == 0 ]] || printf '%s\n' 'Would install ripgrep fzf fd-find bat/batcat and configure local bat link'
+  [[ "$USE_ZSH" == 0 ]] || printf '%s\n' 'Would install zsh and change default shell'
+  printf 'Would inspect memory/swap; create %sG swap only if none exists and RAM < %sMB\n' "$SWAP_SIZE_GB" "$MIN_RAM_MB_FOR_NO_SWAP"
+  printf '%s\n' 'Would configure missing Git identity interactively' 'Would create missing SSH key and configure GitHub SSH' 'Would configure shell tmux auto-attach'
+  [[ "$ENABLE_REBOOT_TMUX" == 0 ]] || printf 'Would configure reboot tmux session: %s\n' "$TMUX_SESSION"
+  [[ "$INSTALL_NODEJS" == 0 ]] || printf '%s\n' 'Would install missing Node.js LTS using NodeSource'
+  [[ "$INSTALL_CLAUDE" == 0 ]] || printf '%s\n' 'Would install missing Claude Code using official installer and configure PATH'
+  [[ "$INSTALL_CODEX" == 0 ]] || printf '%s\n' 'Would install missing @openai/codex globally if npm is available'
+  [[ "$INSTALL_CODE_SERVER" == 0 ]] || printf '%s\n' 'Would install missing code-server and enable (not start) its service'
+  printf '%s\n' 'Would write SETUP_GUIDE.md and display the SSH public key'
+}
 
+# Adapter boundary: tests replace swapon with a shell function; no setup here.
+detect_swap() {
+  local entries
+  entries="$(swapon --show --noheadings)" || return 1
+  if [[ -n "$entries" ]]; then printf '1'; else printf '0'; fi
+}
+
+# Side-effectful entrypoint: never execute this block when sourced by tests.
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+  return 0
+fi
+case "${1-}" in
+  --help) printf '%s\n' 'Usage: bash start.sh [--dry-run | --help]' 'Use environment variables for profile and component overrides.'; exit 0 ;;
+  --dry-run) [[ "$#" == 1 ]] || { warn 'Unexpected arguments'; exit 2; }; resolve_profile; print_plan; exit 0 ;;
+  '') [[ "$#" == 0 ]] || { warn 'Unexpected arguments'; exit 2; } ;;
+  *) warn 'Unknown argument. Use --help or --dry-run.'; exit 2 ;;
+esac
 resolve_profile
 log "Using profile: $PROFILE"
-# ================================
 
 # --- ensure apt exists (Debian/Ubuntu) ---
 if ! command -v apt >/dev/null 2>&1; then
@@ -119,12 +124,8 @@ fi
 mem_kb="$(awk '/MemTotal/ {print $2}' /proc/meminfo)"
 mem_mb="$((mem_kb / 1024))"
 
-has_swap="0"
-if swapon --show 2>/dev/null | awk 'NR>1{exit 1} END{exit 0}'; then
-  has_swap="0"
-else
-  has_swap="1"
-fi
+# Fail closed if detection fails: never assume an unreadable swap state is empty.
+has_swap="$(detect_swap)" || { warn 'Cannot inspect swap; refusing to create swap'; exit 1; }
 
 if [[ "$has_swap" == "0" && "$mem_mb" -lt "$MIN_RAM_MB_FOR_NO_SWAP" ]]; then
   log "Low RAM detected (${mem_mb}MB) and no swap found. Creating ${SWAP_SIZE_GB}G swapfile to avoid OOM..."
