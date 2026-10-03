@@ -152,3 +152,9 @@ cat ~/.config/code-server/config.yaml
 ## 📝 License
 
 MIT
+
+## Safe preview and tests
+
+`PROFILE=minimal bash start.sh --dry-run` validates settings and prints a conditional plan. It does not inspect the machine, run installers, access the network, read credentials, or modify any files. The plan describes conditional actions rather than claiming packages are installed. Running without `--dry-run` still performs the original privileged bootstrap; review it before execution. Unknown flags and invalid component values fail before setup. Unknown profiles retain the documented standard fallback.
+
+Run `bash -n start.sh` and `python3 -m unittest discover -s tests -v`. Tests source the guarded pure functions and exercise dry-run with an empty command PATH and temporary home. They never execute the real setup. Real Debian/Ubuntu installation remains a separate manual test on a disposable VPS.
